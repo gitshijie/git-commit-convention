@@ -3,13 +3,13 @@
 # 安装 Git 提交信息规范钩子（Linux / macOS / Git Bash）
 #
 # 用法:
-#   ./scripts/install-hooks.sh                 交互式选择安装范围
-#   ./scripts/install-hooks.sh --project       仅当前仓库生效
-#   ./scripts/install-hooks.sh --project /path 指定仓库生效
-#   ./scripts/install-hooks.sh --global        所有仓库生效（当前用户）
-#   ./scripts/install-hooks.sh --uninstall     卸载（全局 + 当前仓库）
-#   ./scripts/install-hooks.sh --uninstall /p  卸载（全局 + 指定仓库）
-#   ./scripts/install-hooks.sh --status [/p]   查看安装状态
+#   ./githook-setup/install-hooks.sh                 交互式选择安装范围
+#   ./githook-setup/install-hooks.sh --project       仅当前仓库生效
+#   ./githook-setup/install-hooks.sh --project /path 指定仓库生效
+#   ./githook-setup/install-hooks.sh --global        所有仓库生效（当前用户）
+#   ./githook-setup/install-hooks.sh --uninstall     卸载（全局 + 当前仓库）
+#   ./githook-setup/install-hooks.sh --uninstall /p  卸载（全局 + 指定仓库）
+#   ./githook-setup/install-hooks.sh --status [/p]   查看安装状态
 #
 # 兼容 POSIX sh，不依赖 bash。
 

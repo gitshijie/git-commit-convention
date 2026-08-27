@@ -5,11 +5,11 @@ rem ---------------------------------------------------------------------------
 rem  Git commit message convention -- Windows installer entry
 rem
 rem  Double-click, or run from cmd:
-rem      scripts\install-hooks.bat            interactive menu
-rem      scripts\install-hooks.bat -Project   install for current repo only
-rem      scripts\install-hooks.bat -Global    install for all repos of this user
-rem      scripts\install-hooks.bat -Status    show current status
-rem      scripts\install-hooks.bat -Uninstall uninstall
+rem      githook-setup\install-hooks.bat            interactive menu
+rem      githook-setup\install-hooks.bat -Project   install for current repo only
+rem      githook-setup\install-hooks.bat -Global    install for all repos of this user
+rem      githook-setup\install-hooks.bat -Status    show current status
+rem      githook-setup\install-hooks.bat -Uninstall uninstall
 rem
 rem  The real work is done by install-hooks.ps1 in this same directory.
 rem  This file only handles two Windows quirks:

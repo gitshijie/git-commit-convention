@@ -34,7 +34,7 @@ cd git-commit-convention
 ### Linux / macOS
 
 ```bash
-./scripts/install-hooks.sh
+./githook-setup/install-hooks.sh
 ```
 
 ### Windows
@@ -43,20 +43,20 @@ cd git-commit-convention
 
 ```
 :: 方式 1：文件管理器里双击（最省事）
-scripts\install-hooks.bat
+githook-setup\install-hooks.bat
 ```
 
 ```powershell
 # 方式 2：PowerShell
-.\scripts\install-hooks.ps1
+.\githook-setup\install-hooks.ps1
 
 # 若提示"禁止运行脚本"（执行策略限制）：
-powershell -ExecutionPolicy Bypass -File .\scripts\install-hooks.ps1
+powershell -ExecutionPolicy Bypass -File .\githook-setup\install-hooks.ps1
 ```
 
 ```bash
 # 方式 3：Git Bash 里直接跑 sh 版本
-./scripts/install-hooks.sh
+./githook-setup/install-hooks.sh
 ```
 
 运行后会出现菜单：
@@ -80,13 +80,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-hooks.ps1
 
 | 操作 | Linux / macOS | Windows |
 | --- | --- | --- |
-| 装到当前仓库 | `./scripts/install-hooks.sh --project` | `.\scripts\install-hooks.ps1 -Project` |
-| 装到指定仓库 | `./scripts/install-hooks.sh --project /path/to/repo` | `.\scripts\install-hooks.ps1 -Project -Path D:\work\repo` |
-| 全局安装 | `./scripts/install-hooks.sh --global` | `.\scripts\install-hooks.ps1 -Global` |
-| 查看状态 | `./scripts/install-hooks.sh --status` | `.\scripts\install-hooks.ps1 -Status` |
-| 查看指定仓库状态 | `./scripts/install-hooks.sh --status /path/to/repo` | `.\scripts\install-hooks.ps1 -Status -Path D:\work\repo` |
-| 卸载 | `./scripts/install-hooks.sh --uninstall` | `.\scripts\install-hooks.ps1 -Uninstall` |
-| 卸载指定仓库 | `./scripts/install-hooks.sh --uninstall /path/to/repo` | `.\scripts\install-hooks.ps1 -Uninstall -Path D:\work\repo` |
+| 装到当前仓库 | `./githook-setup/install-hooks.sh --project` | `.\githook-setup\install-hooks.ps1 -Project` |
+| 装到指定仓库 | `./githook-setup/install-hooks.sh --project /path/to/repo` | `.\githook-setup\install-hooks.ps1 -Project -Path D:\work\repo` |
+| 全局安装 | `./githook-setup/install-hooks.sh --global` | `.\githook-setup\install-hooks.ps1 -Global` |
+| 查看状态 | `./githook-setup/install-hooks.sh --status` | `.\githook-setup\install-hooks.ps1 -Status` |
+| 查看指定仓库状态 | `./githook-setup/install-hooks.sh --status /path/to/repo` | `.\githook-setup\install-hooks.ps1 -Status -Path D:\work\repo` |
+| 卸载 | `./githook-setup/install-hooks.sh --uninstall` | `.\githook-setup\install-hooks.ps1 -Uninstall` |
+| 卸载指定仓库 | `./githook-setup/install-hooks.sh --uninstall /path/to/repo` | `.\githook-setup\install-hooks.ps1 -Uninstall -Path D:\work\repo` |
 
 安装完验证一下（应当被拒绝）：
 
@@ -306,9 +306,9 @@ branch protection + CI）再加一道，那样才无法绕过。
 | [`.githooks/lib/commit-msg-rules.sh`](.githooks/lib/commit-msg-rules.sh) | 校验规则，单一事实来源 |
 | [`.gitmessage`](.gitmessage) | 提交模板，`git commit`（不带 `-m`）时自动带出 |
 | [`.gitattributes`](.gitattributes) | 强制钩子为 LF、Windows 脚本为 CRLF（**Windows 关键防护**，勿删） |
-| [`scripts/install-hooks.sh`](scripts/install-hooks.sh) | 安装脚本（Linux / macOS / Git Bash） |
-| [`scripts/install-hooks.ps1`](scripts/install-hooks.ps1) | 安装脚本（Windows PowerShell） |
-| [`scripts/install-hooks.bat`](scripts/install-hooks.bat) | Windows 双击入口，转发给 `.ps1` |
+| [`githook-setup/install-hooks.sh`](githook-setup/install-hooks.sh) | 安装脚本（Linux / macOS / Git Bash） |
+| [`githook-setup/install-hooks.ps1`](githook-setup/install-hooks.ps1) | 安装脚本（Windows PowerShell） |
+| [`githook-setup/install-hooks.bat`](githook-setup/install-hooks.bat) | Windows 双击入口，转发给 `.ps1` |
 
 ---
 
@@ -417,8 +417,8 @@ SourceTree / TortoiseGit / VS Code 多数会走 git 命令行，因此生效。�
 ### 怎么卸载？
 
 ```bash
-./scripts/install-hooks.sh --uninstall      # Linux / macOS
-.\scripts\install-hooks.ps1 -Uninstall      # Windows
+./githook-setup/install-hooks.sh --uninstall      # Linux / macOS
+.\githook-setup\install-hooks.ps1 -Uninstall      # Windows
 ```
 
 **卸载的作用范围要留意：** 它会清理
@@ -429,8 +429,8 @@ SourceTree / TortoiseGit / VS Code 多数会走 git 命令行，因此生效。�
 它不会去扫盘找出你装过的所有仓库。要卸载别的仓库，指定路径：
 
 ```bash
-./scripts/install-hooks.sh --uninstall /path/to/your/project
-.\scripts\install-hooks.ps1 -Uninstall -Path D:\work\myrepo
+./githook-setup/install-hooks.sh --uninstall /path/to/your/project
+.\githook-setup\install-hooks.ps1 -Uninstall -Path D:\work\myrepo
 ```
 
 如果输出「没有找到本规范的安装记录」，通常不是没装，而是**你没站在装过的那个

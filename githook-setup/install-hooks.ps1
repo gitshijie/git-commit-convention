@@ -3,7 +3,7 @@
     安装 Git 提交信息规范钩子（Windows / PowerShell）
 
 .DESCRIPTION
-    与 scripts/install-hooks.sh 功能等价，支持项目级与全局两种安装范围。
+    与 githook-setup/install-hooks.sh 功能等价，支持项目级与全局两种安装范围。
 
     钩子脚本本身不需要为 Windows 重写：Git for Windows 自带 MSYS2 的 sh.exe，
     git 调用钩子时用的是它，而不是 cmd/PowerShell。本脚本负责 Windows 特有的
@@ -25,17 +25,17 @@
     卸载：清理全局配置 +【一个】仓库的配置（默认当前仓库，可配合 -Path 指定）
 
 .EXAMPLE
-    .\scripts\install-hooks.ps1                          # 交互式选择
-    .\scripts\install-hooks.ps1 -Project
-    .\scripts\install-hooks.ps1 -Project -Path D:\work\myrepo
-    .\scripts\install-hooks.ps1 -Global
-    .\scripts\install-hooks.ps1 -Status
-    .\scripts\install-hooks.ps1 -Status -Path D:\work\myrepo
-    .\scripts\install-hooks.ps1 -Uninstall
-    .\scripts\install-hooks.ps1 -Uninstall -Path D:\work\myrepo
+    .\githook-setup\install-hooks.ps1                          # 交互式选择
+    .\githook-setup\install-hooks.ps1 -Project
+    .\githook-setup\install-hooks.ps1 -Project -Path D:\work\myrepo
+    .\githook-setup\install-hooks.ps1 -Global
+    .\githook-setup\install-hooks.ps1 -Status
+    .\githook-setup\install-hooks.ps1 -Status -Path D:\work\myrepo
+    .\githook-setup\install-hooks.ps1 -Uninstall
+    .\githook-setup\install-hooks.ps1 -Uninstall -Path D:\work\myrepo
 
     # 若提示执行策略限制：
-    powershell -ExecutionPolicy Bypass -File .\scripts\install-hooks.ps1
+    powershell -ExecutionPolicy Bypass -File .\githook-setup\install-hooks.ps1
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Interactive')]
@@ -399,7 +399,7 @@ function Uninstall-Hooks ($target) {
     Write-Host ""
     Write-Info2 "本命令【只检查当前目录所在的那一个仓库】。"
     Write-Info2 "如果你把钩子装在别的项目里，请指定它的路径:"
-    Write-Info2 "  .\scripts\install-hooks.ps1 -Uninstall -Path D:\work\myrepo"
+    Write-Info2 "  .\githook-setup\install-hooks.ps1 -Uninstall -Path D:\work\myrepo"
     Write-Info2 "或先 cd 到那个项目再执行本命令。"
     Write-Host ""
     Write-Info2 "忘了装在哪些仓库? 可以这样找，按需调整搜索目录:"

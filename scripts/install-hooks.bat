@@ -41,6 +41,28 @@ rem Prefer PowerShell 7+ (pwsh); fall back to built-in Windows PowerShell 5.1.
 set "PSEXE=powershell"
 where pwsh >nul 2>&1 && set "PSEXE=pwsh"
 
+rem Windows PowerShell 5.1 decodes a BOM-less .ps1 using the system ANSI
+rem codepage (936/GBK on zh-CN). The ps1 contains UTF-8 Chinese, so without
+rem a BOM the bytes get mis-paired, a closing quote is swallowed as a GBK
+rem trail byte, and the parse explodes into dozens of confusing errors.
+rem Detect the missing BOM up front and say so plainly instead.
+rem  ReadAllBytes works on both Windows PowerShell 5.1 and PowerShell 7+.
+rem  (Get-Content -Encoding Byte is 5.1-only; -AsByteStream is 7-only.)
+set "BOMOK=0"
+for /f %%A in ('%PSEXE% -NoProfile -Command "$b=[System.IO.File]::ReadAllBytes('%PS1%'); if ($b.Length -ge 3 -and $b[0] -eq 239 -and $b[1] -eq 187 -and $b[2] -eq 191) { 1 } else { 0 }" 2^>nul') do set "BOMOK=%%A"
+
+if "%BOMOK%"=="0" (
+    echo [!!]   install-hooks.ps1 is missing its UTF-8 BOM.
+    echo.
+    echo        Windows PowerShell 5.1 would read it as GBK and fail with
+    echo        many bogus syntax errors. The BOM was probably stripped by
+    echo        an editor, or the file was re-saved as ANSI/UTF-8-no-BOM.
+    echo.
+    echo        Fix: re-clone the package, or re-save install-hooks.ps1 as
+    echo        "UTF-8 with BOM" ^(VS Code: bottom-right encoding selector^).
+    goto :fail
+)
+
 %PSEXE% -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
 set "RC=%ERRORLEVEL%"
 

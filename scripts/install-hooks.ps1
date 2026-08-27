@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     安装 Git 提交信息规范钩子（Windows / PowerShell）
 
@@ -13,16 +13,16 @@
     安装到仓库（默认当前仓库，可配合 -Path 指定）
 
 .PARAMETER Path
-    -Project 的目标仓库路径
+    目标仓库路径，可用于 -Project / -Status / -Uninstall
 
 .PARAMETER Global
     全局安装，当前用户的所有仓库生效
 
 .PARAMETER Status
-    查看当前安装状态
+    查看安装状态（默认当前仓库，可配合 -Path 指定）
 
 .PARAMETER Uninstall
-    卸载
+    卸载：清理全局配置 +【一个】仓库的配置（默认当前仓库，可配合 -Path 指定）
 
 .EXAMPLE
     .\scripts\install-hooks.ps1                          # 交互式选择
@@ -30,7 +30,9 @@
     .\scripts\install-hooks.ps1 -Project -Path D:\work\myrepo
     .\scripts\install-hooks.ps1 -Global
     .\scripts\install-hooks.ps1 -Status
+    .\scripts\install-hooks.ps1 -Status -Path D:\work\myrepo
     .\scripts\install-hooks.ps1 -Uninstall
+    .\scripts\install-hooks.ps1 -Uninstall -Path D:\work\myrepo
 
     # 若提示执行策略限制：
     powershell -ExecutionPolicy Bypass -File .\scripts\install-hooks.ps1
@@ -42,6 +44,8 @@ param(
     [switch]$Project,
 
     [Parameter(ParameterSetName = 'Project')]
+    [Parameter(ParameterSetName = 'Status')]
+    [Parameter(ParameterSetName = 'Uninstall')]
     [string]$Path,
 
     [Parameter(ParameterSetName = 'Global')]
@@ -91,6 +95,33 @@ $template  = Join-Path $pkgRoot '.gitmessage'
 $hooksDirGit = $hooksDir -replace '\\', '/'
 $templateGit = $template -replace '\\', '/'
 
+# 归一化路径，仅用于比较。要处理三件事：
+#   1. 反斜杠 / 正斜杠混用
+#   2. Git Bash 的 MSYS 写法 "/c/Users/x" 与原生写法 "C:/Users/x" 是同一目录
+#   3. Windows 路径大小写不敏感
+# 不做归一化的话，在 MINGW64 里装、用 PowerShell 卸（或反过来）会互相认不出来，
+# 表现为"没有找到本规范的安装记录"。
+function Get-NormPath ($p) {
+    if (-not $p) { return '' }
+    $s = ([string]$p).Trim() -replace '\\', '/'
+    # "C:/Users/x" -> "/c/Users/x"，统一到 MSYS 写法便于比较
+    if ($s -match '^([A-Za-z]):/(.*)$') {
+        $s = '/' + $Matches[1].ToLower() + '/' + $Matches[2]
+    }
+    $s = $s -replace '/{2,}', '/'
+    if ($s.Length -gt 1) { $s = $s.TrimEnd('/') }
+    return $s.ToLower()
+}
+
+function Test-SamePath ($a, $b) {
+    if (-not $a -or -not $b) { return $false }
+    return (Get-NormPath $a) -eq (Get-NormPath $b)
+}
+
+# 某个 git config 值是否就是本规范的钩子目录 / 提交模板
+function Test-IsOurHooks    ($v) { return (Test-SamePath $v $hooksDirGit) }
+function Test-IsOurTemplate ($v) { return (Test-SamePath $v $templateGit) }
+
 # ---------------------------------------------------------------- 前置检查
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Die "找不到 git。请安装 Git for Windows: https://git-scm.com/download/win"
@@ -139,18 +170,25 @@ function Find-Sh {
     return $null
 }
 
-$shPath = Find-Sh
-if (-not $shPath) {
-    Die @"
+# 卸载 / 查状态不执行钩子，因此不需要 sh.exe，也不该因 CRLF 而退出——
+# 否则一个已损坏的安装就永远清不掉了。
+$needsHookRun = $PSCmdlet.ParameterSetName -notin @('Uninstall', 'Status')
+
+$shPath = $null
+if ($needsHookRun) {
+    $shPath = Find-Sh
+    if (-not $shPath) {
+        Die @"
 找不到 sh.exe —— 钩子无法执行。
 请安装 Git for Windows (https://git-scm.com/download/win)，
 不要只用 GitHub Desktop / IDE 内置的精简版 git。
 "@
+    }
 }
 
 # ---------------------------------------------------------------- CRLF 检查
 # Windows 上 core.autocrlf=true 是默认值，checkout 会把钩子转成 CRLF，
-# shebang 变成 "#!/bin/sh\r"，sh 报 bad interpreter —— 钩子静默不生效，提交照过。
+# shebang 变成 "#!/bin/sh\r"，sh 报 bad interpreter。
 function Test-IsCRLF ($p) {
     $bytes = [System.IO.File]::ReadAllBytes($p)
     $n = [Math]::Min($bytes.Length - 1, 500)
@@ -160,13 +198,15 @@ function Test-IsCRLF ($p) {
     return $false
 }
 
-foreach ($f in @($hookFile, $libFile)) {
-    if (Test-IsCRLF $f) {
-        Write-Err2 "$f 是 CRLF 换行 —— shebang 会解析失败，钩子将静默不生效"
-        Write-Info2 "修复："
-        Write-Info2 "  git config --global core.autocrlf input"
-        Write-Info2 "  cd `"$pkgRoot`" ; git rm --cached -r . ; git reset --hard"
-        exit 1
+if ($needsHookRun) {
+    foreach ($f in @($hookFile, $libFile)) {
+        if (Test-IsCRLF $f) {
+            Write-Err2 "$f 是 CRLF 换行 —— shebang 会解析失败，钩子将静默不生效"
+            Write-Info2 "修复："
+            Write-Info2 "  git config --global core.autocrlf input"
+            Write-Info2 "  cd `"$pkgRoot`" ; git rm --cached -r . ; git reset --hard"
+            exit 1
+        }
     }
 }
 
@@ -194,15 +234,29 @@ function Invoke-SelfTest {
     }
 }
 
+# 解析目标仓库根目录：给了路径就用它，否则用当前目录所在仓库。
+# 返回 $null 表示不在任何仓库内（仅当未指定路径时可能发生）。
+function Resolve-RepoRoot ($target) {
+    if ($target) {
+        if (-not (Test-Path $target)) { Die "目录不存在: $target" }
+        $r = Get-GitCfg @('-C', $target, 'rev-parse', '--show-toplevel')
+        if (-not $r) { Die "不是 git 仓库: $target" }
+        return $r
+    }
+    $r = Get-GitCfg @('rev-parse', '--show-toplevel')
+    if ($r) { return $r }
+    return $null
+}
+
 # ---------------------------------------------------------------- 状态
-function Show-Status {
+function Show-Status ($target) {
     Write-Host ""
     Write-Host "当前安装状态" -ForegroundColor White
     Write-Host ""
 
     $g = Get-GitCfg @('config', '--global', '--get', 'core.hooksPath')
     if ($g) {
-        if ($g -eq $hooksDirGit) { Write-Ok "全局: 已安装本规范 ($g)" }
+        if (Test-IsOurHooks $g) { Write-Ok "全局: 已安装本规范 ($g)" }
         else { Write-Warn2 "全局: core.hooksPath 指向别处 ($g)" }
     } else {
         Write-Info2 "全局: 未设置 core.hooksPath"
@@ -211,18 +265,20 @@ function Show-Status {
     $gt = Get-GitCfg @('config', '--global', '--get', 'commit.template')
     if ($gt) { Write-Info2 "全局: commit.template = $gt" }
 
-    $root = Get-GitCfg @('rev-parse', '--show-toplevel')
+    $root = Resolve-RepoRoot $target
     if ($root) {
-        $l = Get-GitCfg @('config', '--local', '--get', 'core.hooksPath')
+        $l = Get-GitCfg @('-C', $root, 'config', '--local', '--get', 'core.hooksPath')
         if ($l) {
-            if ($l -eq $hooksDirGit) { Write-Ok "当前仓库 ($root): 已安装本规范" }
-            else { Write-Warn2 "当前仓库 ($root): core.hooksPath 指向别处 ($l)" }
+            if (Test-IsOurHooks $l) { Write-Ok "仓库 ($root): 已安装本规范" }
+            else { Write-Warn2 "仓库 ($root): core.hooksPath 指向别处 ($l)" }
         } else {
-            Write-Info2 "当前仓库 ($root): 未设置 core.hooksPath（若全局已装则走全局）"
+            Write-Info2 "仓库 ($root): 未设置 core.hooksPath，若全局已装则走全局"
         }
     } else {
-        Write-Info2 "当前目录不是 git 仓库"
+        Write-Info2 "当前目录不是 git 仓库，可用 -Status -Path 指定仓库"
     }
+    Write-Host ""
+    Write-Info2 "注: 项目级只查【这一个】仓库。别的仓库请用 -Path 指定。"
     Write-Host ""
 }
 
@@ -254,7 +310,7 @@ function Install-Project ($target) {
 
 function Install-Global {
     $cur = Get-GitCfg @('config', '--global', '--get', 'core.hooksPath')
-    if ($cur -and $cur -ne $hooksDirGit) {
+    if ($cur -and -not (Test-IsOurHooks $cur)) {
         Write-Warn2 "全局 core.hooksPath 当前指向: $cur"
         Write-Info2 "继续将覆盖它。原值已备份到 commit-convention.previousHooksPath"
         & git config --global commit-convention.previousHooksPath $cur
@@ -278,39 +334,78 @@ function Install-Global {
     Write-Info2 "3. 某个仓库想豁免: cd 该仓库 ; git config core.hooksPath .git/hooks"
 }
 
-function Uninstall-Hooks {
+function Uninstall-Hooks ($target) {
     $did = $false
 
-    if ((Get-GitCfg @('config', '--global', '--get', 'core.hooksPath')) -eq $hooksDirGit) {
+    # ---- 全局 ----
+    if (Test-IsOurHooks (Get-GitCfg @('config', '--global', '--get', 'core.hooksPath'))) {
         & git config --global --unset core.hooksPath
         $prev = Get-GitCfg @('config', '--global', '--get', 'commit-convention.previousHooksPath')
         if ($prev) {
             & git config --global core.hooksPath $prev
             & git config --global --unset commit-convention.previousHooksPath
-            Write-Ok "已卸载全局安装，并恢复原 core.hooksPath: $prev"
+            Write-Ok "已卸载【全局】安装，并恢复原 core.hooksPath: $prev"
         } else {
-            Write-Ok "已卸载全局安装"
+            Write-Ok "已卸载【全局】安装 ~/.gitconfig"
         }
         $did = $true
     }
-    if ((Get-GitCfg @('config', '--global', '--get', 'commit.template')) -eq $templateGit) {
+    if (Test-IsOurTemplate (Get-GitCfg @('config', '--global', '--get', 'commit.template'))) {
         & git config --global --unset commit.template
         $did = $true
     }
 
-    if (Get-GitCfg @('rev-parse', '--git-dir')) {
-        if ((Get-GitCfg @('config', '--local', '--get', 'core.hooksPath')) -eq $hooksDirGit) {
-            & git config --local --unset core.hooksPath
-            Write-Ok "已卸载当前仓库的安装"
+    # ---- 项目级 ----
+    $root = Resolve-RepoRoot $target
+    if ($root) {
+        if (Test-IsOurHooks (Get-GitCfg @('-C', $root, 'config', '--local', '--get', 'core.hooksPath'))) {
+            & git -C $root config --local --unset core.hooksPath
+            Write-Ok "已卸载【项目级】安装: $root"
             $did = $true
         }
-        if ((Get-GitCfg @('config', '--local', '--get', 'commit.template')) -eq $templateGit) {
-            & git config --local --unset commit.template
+        if (Test-IsOurTemplate (Get-GitCfg @('-C', $root, 'config', '--local', '--get', 'commit.template'))) {
+            & git -C $root config --local --unset commit.template
             $did = $true
         }
     }
 
-    if (-not $did) { Write-Info2 "没有找到本规范的安装记录" }
+    if ($did) { return 0 }
+
+    # 没找到——把实际读到的值打出来，用户一眼能看出是"没装"还是"装的是另一份拷贝"
+    Write-Warn2 "没有找到本规范的安装记录"
+    Write-Host ""
+    Write-Info2 "本规范的钩子目录: $hooksDirGit"
+    Write-Host ""
+    Write-Info2 "已检查的位置及实际读到的值:"
+
+    $gv = Get-GitCfg @('config', '--global', '--get', 'core.hooksPath')
+    if (-not $gv) { $gv = '(未设置)' }
+    Write-Info2 "  1. 全局 ~/.gitconfig"
+    Write-Info2 "     core.hooksPath = $gv"
+
+    if ($root) {
+        $lv = Get-GitCfg @('-C', $root, 'config', '--local', '--get', 'core.hooksPath')
+        if (-not $lv) { $lv = '(未设置)' }
+        Write-Info2 "  2. 仓库 $root"
+        Write-Info2 "     core.hooksPath = $lv"
+    } else {
+        Write-Info2 "  2. 当前目录不在任何 git 仓库内，项目级无从检查"
+    }
+    Write-Host ""
+    Write-Info2 "若上面某个值确实指向一个 .githooks 目录，只是路径跟本份不同,"
+    Write-Info2 "说明你当初是用【另一份拷贝】安装的。可以直接手工清掉:"
+    Write-Info2 "  git config --unset core.hooksPath            # 在目标仓库内执行"
+    Write-Info2 "  git config --global --unset core.hooksPath   # 全局"
+    Write-Host ""
+    Write-Info2 "本命令【只检查当前目录所在的那一个仓库】。"
+    Write-Info2 "如果你把钩子装在别的项目里，请指定它的路径:"
+    Write-Info2 "  .\scripts\install-hooks.ps1 -Uninstall -Path D:\work\myrepo"
+    Write-Info2 "或先 cd 到那个项目再执行本命令。"
+    Write-Host ""
+    Write-Info2 "忘了装在哪些仓库? 可以这样找，按需调整搜索目录:"
+    Write-Info2 "  Get-ChildItem D:\work -Recurse -Force -Filter config -File |"
+    Write-Info2 "    Select-String 'hooksPath' | Select-Object Path"
+    return 1
 }
 
 # ---------------------------------------------------------------- 交互菜单
@@ -337,7 +432,7 @@ function Invoke-Interactive {
     Write-Host "     且本目录不能删除或移动。" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  3) 查看当前状态" -ForegroundColor Cyan
-    Write-Host "  4) 卸载" -ForegroundColor Cyan
+    Write-Host "  4) 卸载（全局 + 指定的一个仓库）" -ForegroundColor Cyan
     Write-Host "  q) 退出" -ForegroundColor Cyan
     Write-Host ""
 
@@ -359,8 +454,16 @@ function Invoke-Interactive {
             if ($yn -match '^\s*(y|yes)\s*$') { Install-Global }
             else { Write-Info2 "已取消"; exit 0 }
         }
-        '3' { Show-Status; exit 0 }
-        '4' { Uninstall-Hooks; exit 0 }
+        '3' { Show-Status $null; exit 0 }
+        '4' {
+            # 卸载只能针对一个仓库，这里明确问清楚，避免"卸载了却没生效"
+            Write-Host ""
+            $hint = if ($repoRoot) { $repoRoot } else { '当前目录，但当前不在仓库内' }
+            $p = Read-Host "要卸载的仓库路径（直接回车 = $hint）"
+            if ([string]::IsNullOrWhiteSpace($p)) { $p = $null }
+            else { $p = $p.Trim('"').Trim() }
+            exit (Uninstall-Hooks $p)
+        }
         'q' { Write-Info2 "已退出"; exit 0 }
         'Q' { Write-Info2 "已退出"; exit 0 }
         default { Die "无效选项: $choice" }
@@ -369,8 +472,8 @@ function Invoke-Interactive {
 
 # ---------------------------------------------------------------- 主流程
 switch ($PSCmdlet.ParameterSetName) {
-    'Status'    { Show-Status; exit 0 }
-    'Uninstall' { Uninstall-Hooks; exit 0 }
+    'Status'    { Show-Status $Path; exit 0 }
+    'Uninstall' { exit (Uninstall-Hooks $Path) }
     'Project'   { Invoke-SelfTest; Install-Project $Path }
     'Global'    { Invoke-SelfTest; Install-Global }
     default     { Invoke-SelfTest; Invoke-Interactive }

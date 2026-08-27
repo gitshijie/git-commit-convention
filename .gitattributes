@@ -10,6 +10,13 @@
 
 # 反过来，Windows 原生脚本必须是 CRLF：
 # .bat 用 LF 时，cmd 对 goto / 带引号路径的解析会出错。
+#
+# 注意 install-hooks.ps1 必须保留文件开头的 UTF-8 BOM (EF BB BF)：
+# Windows PowerShell 5.1（Win10/11 内置的那个）读取【无 BOM】的 .ps1 时，
+# 按系统 ANSI 代码页解码（简体中文机器上是 936/GBK）。脚本里的中文是 UTF-8，
+# 一个汉字 3 字节，被 GBK 按 2 字节一组吞掉后字节错位，会连带吃掉紧随其后的
+# 引号或括号，于是整个文件语法崩溃，报一屏 "意外的标记" 之类的错。
+# BOM 能让 5.1 正确识别为 UTF-8。git 的 eol 转换不会破坏 BOM（已实测）。
 *.bat              text eol=crlf
 *.ps1              text eol=crlf
 

@@ -72,7 +72,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-hooks.ps1
      代价：会停用各仓库 .git/hooks/ 下的其他钩子
 
   3) 查看当前状态
-  4) 卸载
+  4) 卸载（全局 + 指定的一个仓库）
   q) 退出
 ```
 
@@ -84,7 +84,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-hooks.ps1
 | 装到指定仓库 | `./scripts/install-hooks.sh --project /path/to/repo` | `.\scripts\install-hooks.ps1 -Project -Path D:\work\repo` |
 | 全局安装 | `./scripts/install-hooks.sh --global` | `.\scripts\install-hooks.ps1 -Global` |
 | 查看状态 | `./scripts/install-hooks.sh --status` | `.\scripts\install-hooks.ps1 -Status` |
+| 查看指定仓库状态 | `./scripts/install-hooks.sh --status /path/to/repo` | `.\scripts\install-hooks.ps1 -Status -Path D:\work\repo` |
 | 卸载 | `./scripts/install-hooks.sh --uninstall` | `.\scripts\install-hooks.ps1 -Uninstall` |
+| 卸载指定仓库 | `./scripts/install-hooks.sh --uninstall /path/to/repo` | `.\scripts\install-hooks.ps1 -Uninstall -Path D:\work\repo` |
 
 安装完验证一下（应当被拒绝）：
 
@@ -105,6 +107,32 @@ git commit --allow-empty -m "wip"
 | 适合 | 团队协作、只想规范某几个项目 | 个人电脑、想统一自己所有提交 |
 
 **推荐项目级。** 全局模式方便，但有一个必须知道的副作用，见下。
+
+### 两种范围分别改了哪些文件
+
+安装脚本**不复制任何文件**，只写两条 git 配置。区别仅在于**写进哪个配置文件**：
+
+| | 项目级 | 全局 |
+| --- | --- | --- |
+| 写入的文件 | `<你的仓库>/.git/config` | `~/.gitconfig`（Windows: `C:\Users\<你>\.gitconfig`） |
+| 等价命令 | `git config core.hooksPath ...` | `git config --global core.hooksPath ...` |
+| 该文件是否受版本控制 | **否**，`.git/` 不进仓库，队友 clone 后仍需各自安装 | 否，属于你的个人环境 |
+
+两种范围写入的内容完全一样，都是这两条：
+
+```ini
+[core]
+	hooksPath = /abs/path/to/git-commit-convention/.githooks
+[commit]
+	template = /abs/path/to/git-commit-convention/.gitmessage
+```
+
+`.githooks/` 和 `.gitmessage` 始终留在本规范仓库里，两种范围都是**指过去**，
+不做拷贝——所以改规则库即时生效，但本目录也因此不能删除或移动。
+
+优先级：git 配置的生效顺序是 system → global → local，**local 覆盖 global**。
+所以某个仓库若同时装了两种范围，实际生效的是项目级那条；也正因如此，
+想让某个仓库从全局模式豁免，只需在它里面写一条 local 配置指回 `.git/hooks`。
 
 ### 全局模式的副作用
 
@@ -277,7 +305,7 @@ branch protection + CI）再加一道，那样才无法绕过。
 | [`.githooks/commit-msg`](.githooks/commit-msg) | 钩子本体，`git commit` 时被 git 调用 |
 | [`.githooks/lib/commit-msg-rules.sh`](.githooks/lib/commit-msg-rules.sh) | 校验规则，单一事实来源 |
 | [`.gitmessage`](.gitmessage) | 提交模板，`git commit`（不带 `-m`）时自动带出 |
-| [`.gitattributes`](.gitattributes) | 强制钩子为 LF 换行（**Windows 关键防护**，勿删） |
+| [`.gitattributes`](.gitattributes) | 强制钩子为 LF、Windows 脚本为 CRLF（**Windows 关键防护**，勿删） |
 | [`scripts/install-hooks.sh`](scripts/install-hooks.sh) | 安装脚本（Linux / macOS / Git Bash） |
 | [`scripts/install-hooks.ps1`](scripts/install-hooks.ps1) | 安装脚本（Windows PowerShell） |
 | [`scripts/install-hooks.bat`](scripts/install-hooks.bat) | Windows 双击入口，转发给 `.ps1` |
@@ -332,6 +360,34 @@ git rm --cached -r .
 git reset --hard
 ```
 
+### 双击 .bat 报一屏「意外的标记」「运算符是为将来使用而保留的」？
+
+这是**编码**问题，不是语法问题。`install-hooks.ps1` 开头必须保留 **UTF-8 BOM**
+（`EF BB BF` 三个字节）。
+
+Windows 10/11 内置的是 **Windows PowerShell 5.1**，它读取**没有 BOM** 的 `.ps1`
+时不按 UTF-8 解析，而是按系统 ANSI 代码页（简体中文机器上是 936/GBK）。脚本里的
+中文是 UTF-8 编码，一个汉字 3 字节，被 GBK 按 2 字节一组消化后字节就错位了，
+紧跟在中文后面的 `"` 或 `)` 会被当成某个汉字的尾字节吃掉——字符串没了结尾，
+于是从那一行开始整个文件语法崩溃，报出一堆指向合法代码的荒谬错误。
+
+本仓库的 `.ps1` 自带 BOM，正常 clone 不会有这个问题。会踩到通常是因为：
+
+- 用编辑器打开另存过，编码选成了「UTF-8」（不带 BOM）或「ANSI」
+- 某些工具链在传输/打包过程中剥掉了 BOM
+
+修复：把 `install-hooks.ps1` 重新保存为 **UTF-8 with BOM**（VS Code 右下角点
+编码 → Save with Encoding → UTF-8 with BOM），或者直接重新 clone。
+
+`install-hooks.bat` 会在调用前先检查 BOM，缺失时给一句明确提示，不会再让你面对
+那一屏乱码报错。
+
+另外两条相关的编码约定，改动时请保持：
+
+- `.githooks/` 下的 sh 脚本**不能有 BOM**——`sh` 会把 BOM 当成命令的一部分
+- `install-hooks.bat` **只用 ASCII**——`.bat` 按当前控制台代码页解析，
+  写中文在 GBK 终端上必然是乱码。所有中文输出都由 `.ps1` 负责
+
 ### Windows 需要装什么？
 
 需要 **Git for Windows**（https://git-scm.com/download/win）。它自带 MSYS2 的
@@ -365,9 +421,66 @@ SourceTree / TortoiseGit / VS Code 多数会走 git 命令行，因此生效。�
 .\scripts\install-hooks.ps1 -Uninstall      # Windows
 ```
 
-会清掉本规范写入的 `core.hooksPath` 和 `commit.template`；若全局安装时覆盖过
-别人的 `core.hooksPath`，卸载时会自动恢复原值（安装时备份在
+**卸载的作用范围要留意：** 它会清理
+
+1. **全局配置**（`~/.gitconfig`）里本规范写入的 `core.hooksPath` / `commit.template`；
+2. **一个仓库**的 `.git/config` —— 就是**你当前所在的那个仓库**。
+
+它不会去扫盘找出你装过的所有仓库。要卸载别的仓库，指定路径：
+
+```bash
+./scripts/install-hooks.sh --uninstall /path/to/your/project
+.\scripts\install-hooks.ps1 -Uninstall -Path D:\work\myrepo
+```
+
+如果输出「没有找到本规范的安装记录」，通常不是没装，而是**你没站在装过的那个
+仓库里**（很常见的情形：在本规范仓库目录下执行卸载，但钩子其实装在你的业务
+项目上）。此时脚本会列出它实际检查了哪两个位置，照着指定路径重试即可。
+
+忘了装在哪些仓库：
+
+```bash
+# Linux / macOS
+grep -rl 'hooksPath.*git-commit-convention' ~/ --include=config 2>/dev/null
+
+# Windows PowerShell（按需改搜索目录）
+Get-ChildItem D:\work -Recurse -Force -Filter config -File |
+  Select-String 'hooksPath.*git-commit-convention' | Select-Object Path
+```
+
+若全局安装时覆盖过别人的 `core.hooksPath`，卸载会自动恢复原值（安装时备份在
 `commit-convention.previousHooksPath`）。
+
+也可以手工卸载，就两条配置：
+
+```bash
+git config --unset core.hooksPath        # 项目级，需在目标仓库内执行
+git config --unset commit.template
+git config --global --unset core.hooksPath   # 全局
+git config --global --unset commit.template
+```
+
+### Git Bash 装的，能用 PowerShell 卸载吗？（反过来也一样）
+
+可以。但要知道这里有个坑，早期版本会踩到：
+
+同一个目录，两边写进配置里的**路径写法不一样**。Git Bash / MINGW64 里
+`pwd` 给出的是 MSYS 形式 `/c/Users/jerry/Desktop/git-commit-convention`，
+PowerShell 给出的是原生形式 `C:/Users/jerry/Desktop/git-commit-convention`。
+指的是同一处，但字符串不相等。
+
+如果卸载时拿 `core.hooksPath` 的值去做**字面比较**，就会认不出对方装的那份，
+报「没有找到本规范的安装记录」——明明装着。
+
+现在两个脚本都做了路径归一化（统一斜杠、`C:/x` 与 `/c/x` 互转、忽略盘符大小写、
+去掉重复和末尾斜杠），并且同时匹配两种写法，所以：
+
+- Git Bash 装的，PowerShell 能卸；
+- PowerShell 装的，Git Bash 能卸；
+- 用旧版本装过的历史记录，也照样能被认出来清掉。
+
+安装时写进配置的一律是**原生形式**（`C:/...`），这样 PowerShell、GUI 客户端、
+cmd 都能直接用；Git Bash 自己读文件仍走 MSYS 形式。
 
 ---
 

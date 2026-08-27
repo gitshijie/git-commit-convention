@@ -1,0 +1,17 @@
+# Windows 上 core.autocrlf=true 是默认值，checkout 会把文本转成 CRLF。
+# 钩子一旦变成 CRLF，shebang 就成了 "#!/bin/sh\r"，sh 报 bad interpreter，
+# 表现为钩子【静默不生效】——提交照常通过，比报错还危险。
+#
+# 下面几条强制这些文件在任何平台上都保持 LF。删掉本文件会让 Windows 用户踩坑。
+
+.githooks/**       text eol=lf
+*.sh               text eol=lf
+.gitmessage        text eol=lf
+
+# 反过来，Windows 原生脚本必须是 CRLF：
+# .bat 用 LF 时，cmd 对 goto / 带引号路径的解析会出错。
+*.bat              text eol=crlf
+*.ps1              text eol=crlf
+
+# 文档跟随平台即可
+*.md               text

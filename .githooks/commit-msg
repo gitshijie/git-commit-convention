@@ -1,0 +1,114 @@
+#!/bin/sh
+#
+# commit-msg hook —— 校验提交信息是否符合 Conventional Commits 规范
+#
+# 支持两种安装方式：
+#   项目级  仓库内 git config core.hooksPath <本目录>
+#   全局级  git config --global core.hooksPath <本目录>
+#
+# 全局模式下会先转发到各仓库自己的 .git/hooks/commit-msg（若存在），
+# 以免顶掉 husky / pre-commit 等工具已有的钩子。
+#
+# 绕过: git commit --no-verify
+
+set -u
+
+MSG_FILE="$1"
+
+HOOK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# ---------------------------------------------------------------- 转发原有钩子
+#
+# core.hooksPath 一旦设置，git 就【完全不再看】.git/hooks/ 下的钩子。
+# 全局安装时这会静默停用所有仓库已有的 commit-msg 钩子，因此这里主动转发。
+# 原钩子若拒绝（非 0），直接沿用它的退出码，不再往下走。
+if [ -z "${COMMIT_CONVENTION_NO_CHAIN:-}" ]; then
+	_git_dir=$(git rev-parse --git-dir 2>/dev/null || echo '')
+	if [ -n "$_git_dir" ]; then
+		_orig="$_git_dir/hooks/commit-msg"
+		# 避免自我递归：本脚本可能就是被 symlink 过去的那一个
+		if [ -x "$_orig" ] \
+			&& [ "$(CDPATH= cd -- "$(dirname -- "$_orig")" && pwd)" != "$HOOK_DIR" ]
+		then
+			COMMIT_CONVENTION_NO_CHAIN=1 "$_orig" "$MSG_FILE" || exit $?
+		fi
+	fi
+fi
+
+# ---------------------------------------------------------------- 加载规则库
+LIB="$HOOK_DIR/lib/commit-msg-rules.sh"
+
+if [ ! -f "$LIB" ]; then
+	echo "commit-msg: 找不到规则库 $LIB —— 拒绝提交（宁可挡住也不放过）" >&2
+	exit 1
+fi
+
+# 规则库加载失败的诊断提示，多处共用。
+crlf_hint() {
+	echo "  常见原因: 文件是 CRLF 换行（Windows 的 core.autocrlf 转换所致）。" >&2
+	echo "  修复:" >&2
+	echo "    git config --global core.autocrlf input" >&2
+	echo "    cd <本规范目录> && git rm --cached -r . && git reset --hard" >&2
+}
+
+# 【必须在 source 之前查 CRLF】
+#
+# dash / busybox sh 遇到被 source 文件里的语法错误会【直接终止整个脚本】,
+# 后面的 `|| {...}` 和函数存在性检查根本没机会执行——只会吐出一屏
+# "not found" 噪音,用户完全看不出真正原因。所以先自己看一眼文件头。
+#
+# 注：这里不检查本文件自身是否 CRLF——真是 CRLF 的话这段代码自己也是 CRLF,
+# 根本执行不到。那种情况下 shebang 解析失败,sh 返回 126,提交同样被拦住,
+# 只是提示不友好。诊断由安装脚本负责（它会在装之前检查两个文件的换行符）。
+if head -1 "$LIB" | LC_ALL=C grep -q "$(printf '\r')"; then
+	echo "commit-msg: 规则库是 CRLF 换行,无法加载 —— 拒绝提交" >&2
+	echo "  文件: $LIB" >&2
+	crlf_hint
+	exit 1
+fi
+
+if ! . "$LIB"; then
+	echo "commit-msg: 规则库加载失败: $LIB —— 拒绝提交" >&2
+	crlf_hint
+	exit 1
+fi
+
+# 兜底：确认关键函数确实就位。
+# 某些 shell 下 source 会报语法错误但仍返回 0，函数并未定义——
+# 若不检查，后续调用失败会让提交被【放行】。
+for _fn in strip_commit_comments validate_commit_msg print_commit_convention; do
+	if ! command -v "$_fn" >/dev/null 2>&1; then
+		echo "commit-msg: 规则库未正确加载（缺少 $_fn），拒绝提交" >&2
+		crlf_hint
+		exit 1
+	fi
+done
+
+# 允许各仓库用 git config 覆盖默认规则
+command -v load_commit_config >/dev/null 2>&1 && load_commit_config
+
+# ---------------------------------------------------------------- 输出着色
+if [ -t 2 ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+	RED=$(printf '\033[31m'); YEL=$(printf '\033[33m')
+	CYA=$(printf '\033[36m'); BLD=$(printf '\033[1m'); RST=$(printf '\033[0m')
+else
+	RED=''; YEL=''; CYA=''; BLD=''; RST=''
+fi
+
+# ---------------------------------------------------------------- 校验
+MSG=$(strip_commit_comments < "$MSG_FILE")
+
+if validate_commit_msg "$MSG"; then
+	exit 0
+fi
+
+{
+	printf '\n%s提交信息不符合规范，已中止提交：%s\n\n' "${BLD}${RED}" "$RST"
+	printf '%s' "$VALIDATE_ERRORS" | sed "s/^/  ${RED}x${RST} /"
+	printf '\n%s你的提交信息：%s\n' "$YEL" "$RST"
+	printf '%s\n' "$MSG" | sed -e '/./,$!d' -e 's/^/  | /'
+	print_commit_convention "$CYA" "$RST"
+	printf '\n修改后重新提交：%sgit commit%s\n' "$BLD" "$RST"
+} >&2
+
+exit 1

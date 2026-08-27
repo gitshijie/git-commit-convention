@@ -75,13 +75,59 @@ function Write-Err2  ($m) { Write-Host "[!!]   $m" -ForegroundColor Red }
 function Write-Info2 ($m) { Write-Host "       $m" }
 function Die         ($m) { Write-Err2 $m; exit 1 }
 
+# ---------------------------------------------------------------- 调外部命令
+# Windows PowerShell 5.1 的一个坑：当 $ErrorActionPreference = 'Stop' 时，
+# 只要外部命令的 stderr 被【重定向】（2>&1 或 2>$null），5.1 就把 stderr 的每
+# 一行包成 ErrorRecord（NativeCommandError），EAP=Stop 于是让脚本当场中止——
+# 哪怕命令本身完全正常，哪怕那行 stderr 只是一个空行。表现就是
+#     sh.exe :
+#     + CategoryInfo : NotSpecified: (:String) [], RemoteException
+#     + FullyQualifiedErrorId : NativeCommandError
+# 指向一行看起来毫无问题的代码。pwsh 7 没有这个行为，所以只在自带 5.1 的
+# Windows 上炸，装了 pwsh 的机器测不出来。
+#
+# 所以所有外部命令都走这个包装：在函数内把 EAP 降为 Continue（函数内赋值只
+# 影响本地作用域，不会泄漏到外层），把 stdout + stderr 一并收下，退出码交给
+# 调用方判断。本脚本有两处【正常且期望】非 0 退出码：git config --get 读不
+# 存在的键、自检时故意用违规信息调钩子。
+function Invoke-Native {
+    param([string]$Exe, [string[]]$NativeArgs)
+    $ErrorActionPreference = 'Continue'
+    $raw  = & $Exe @NativeArgs 2>&1
+    $code = $LASTEXITCODE
+
+    # 用 2>&1 合流后，两个流靠对象类型区分：stderr 是 ErrorRecord，stdout 是
+    # 字符串。必须分开——git 有时带 warning: 却正常退出，混在一起会让调用方把
+    # 警告文字当成配置值读走。
+    $out = @(); $err = @()
+    foreach ($item in @($raw)) {
+        if ($item -is [System.Management.Automation.ErrorRecord]) { $err += [string]$item }
+        else { $out += [string]$item }
+    }
+    return [pscustomobject]@{
+        ExitCode = $code
+        StdOut   = $out
+        StdErr   = $err
+        Text     = ((@($out) + @($err)) -join [Environment]::NewLine)
+    }
+}
+
 # git config 读取包装：键不存在时返回空串而不是报错
 function Get-GitCfg {
     param([string[]]$GitArgs)
-    $out = & git @GitArgs 2>$null
-    if ($LASTEXITCODE -ne 0) { return '' }
-    if ($null -eq $out) { return '' }
-    return ([string]$out).Trim()
+    $r = Invoke-Native 'git' $GitArgs
+    if ($r.ExitCode -ne 0) { return '' }
+    if ($r.StdOut.Count -eq 0) { return '' }
+    return ([string]$r.StdOut[0]).Trim()
+}
+
+# git 写配置：失败要说话，不能默默吞掉
+function Set-GitCfg {
+    param([string[]]$GitArgs)
+    $r = Invoke-Native 'git' $GitArgs
+    if ($r.ExitCode -ne 0) {
+        Die "git 命令失败（退出码 $($r.ExitCode)）: git $($GitArgs -join ' ')$([Environment]::NewLine)       $($r.Text)"
+    }
 }
 
 # ---------------------------------------------------------------- 路径
@@ -127,7 +173,7 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Die "找不到 git。请安装 Git for Windows: https://git-scm.com/download/win"
 }
 
-$verRaw = (& git --version) -join ' '
+$verRaw = (Invoke-Native 'git' @('--version')).Text
 if ($verRaw -match 'git version (\d+)\.(\d+)') {
     $gMajor = [int]$Matches[1]; $gMinor = [int]$Matches[2]
     if ($gMajor -lt 2 -or ($gMajor -eq 2 -and $gMinor -lt 9)) {
@@ -219,13 +265,20 @@ function Invoke-SelfTest {
         $env:COMMIT_CONVENTION_NO_CHAIN = '1'
 
         # 必须用 LF 写入：PowerShell 的 Set-Content 默认 CRLF，会干扰校验
+        # 钩子拒绝时会往 stderr 打整篇规范说明，这是预期输出，
+        # 由 Invoke-Native 收下丢掉，只看退出码。
         [System.IO.File]::WriteAllText($tmp, "这是一条不合规的提交信息`n")
-        & $shPath $hookForSh $tmpForSh 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { Die "自检失败：不合规的提交信息未被拦截" }
+        $bad = Invoke-Native $shPath @($hookForSh, $tmpForSh)
+        if ($bad.ExitCode -eq 0) { Die "自检失败：不合规的提交信息未被拦截" }
 
         [System.IO.File]::WriteAllText($tmp, "feat(core): 添加初始化流程`n")
-        & $shPath $hookForSh $tmpForSh 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { Die "自检失败：合规的提交信息被误拦截" }
+        $good = Invoke-Native $shPath @($hookForSh, $tmpForSh)
+        if ($good.ExitCode -ne 0) {
+            Write-Err2 "自检失败：合规的提交信息被误拦截"
+            Write-Info2 "钩子输出："
+            foreach ($ln in (@($good.StdOut) + @($good.StdErr))) { Write-Info2 "  $ln" }
+            exit 1
+        }
 
         Write-Ok "钩子自检通过（违规拦截 / 合规放行）"
     } finally {
@@ -298,8 +351,8 @@ function Install-Project ($target) {
         Write-Info2 "但本钩子会主动转发调用它，原有校验仍然生效。"
     }
 
-    & git -C $root config core.hooksPath $hooksDirGit
-    if (Test-Path $template) { & git -C $root config commit.template $templateGit }
+    Set-GitCfg @('-C', $root, 'config', 'core.hooksPath', $hooksDirGit)
+    if (Test-Path $template) { Set-GitCfg @('-C', $root, 'config', 'commit.template', $templateGit) }
 
     Write-Ok "已安装到仓库: $root"
     Write-Info2 "core.hooksPath  = $(Get-GitCfg @('-C', $root, 'config', '--get', 'core.hooksPath'))"
@@ -313,11 +366,11 @@ function Install-Global {
     if ($cur -and -not (Test-IsOurHooks $cur)) {
         Write-Warn2 "全局 core.hooksPath 当前指向: $cur"
         Write-Info2 "继续将覆盖它。原值已备份到 commit-convention.previousHooksPath"
-        & git config --global commit-convention.previousHooksPath $cur
+        Set-GitCfg @('config', '--global', 'commit-convention.previousHooksPath', $cur)
     }
 
-    & git config --global core.hooksPath $hooksDirGit
-    if (Test-Path $template) { & git config --global commit.template $templateGit }
+    Set-GitCfg @('config', '--global', 'core.hooksPath', $hooksDirGit)
+    if (Test-Path $template) { Set-GitCfg @('config', '--global', 'commit.template', $templateGit) }
 
     Write-Ok "已全局安装（当前用户的所有仓库）"
     Write-Info2 "core.hooksPath  = $(Get-GitCfg @('config', '--global', '--get', 'core.hooksPath'))"
@@ -339,11 +392,11 @@ function Uninstall-Hooks ($target) {
 
     # ---- 全局 ----
     if (Test-IsOurHooks (Get-GitCfg @('config', '--global', '--get', 'core.hooksPath'))) {
-        & git config --global --unset core.hooksPath
+        Set-GitCfg @('config', '--global', '--unset', 'core.hooksPath')
         $prev = Get-GitCfg @('config', '--global', '--get', 'commit-convention.previousHooksPath')
         if ($prev) {
-            & git config --global core.hooksPath $prev
-            & git config --global --unset commit-convention.previousHooksPath
+            Set-GitCfg @('config', '--global', 'core.hooksPath', $prev)
+            Set-GitCfg @('config', '--global', '--unset', 'commit-convention.previousHooksPath')
             Write-Ok "已卸载【全局】安装，并恢复原 core.hooksPath: $prev"
         } else {
             Write-Ok "已卸载【全局】安装 ~/.gitconfig"
@@ -351,7 +404,7 @@ function Uninstall-Hooks ($target) {
         $did = $true
     }
     if (Test-IsOurTemplate (Get-GitCfg @('config', '--global', '--get', 'commit.template'))) {
-        & git config --global --unset commit.template
+        Set-GitCfg @('config', '--global', '--unset', 'commit.template')
         $did = $true
     }
 
@@ -359,12 +412,12 @@ function Uninstall-Hooks ($target) {
     $root = Resolve-RepoRoot $target
     if ($root) {
         if (Test-IsOurHooks (Get-GitCfg @('-C', $root, 'config', '--local', '--get', 'core.hooksPath'))) {
-            & git -C $root config --local --unset core.hooksPath
+            Set-GitCfg @('-C', $root, 'config', '--local', '--unset', 'core.hooksPath')
             Write-Ok "已卸载【项目级】安装: $root"
             $did = $true
         }
         if (Test-IsOurTemplate (Get-GitCfg @('-C', $root, 'config', '--local', '--get', 'commit.template'))) {
-            & git -C $root config --local --unset commit.template
+            Set-GitCfg @('-C', $root, 'config', '--local', '--unset', 'commit.template')
             $did = $true
         }
     }

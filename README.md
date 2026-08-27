@@ -388,6 +388,35 @@ Windows 10/11 内置的是 **Windows PowerShell 5.1**，它读取**没有 BOM** 
 - `install-hooks.bat` **只用 ASCII**——`.bat` 按当前控制台代码页解析，
   写中文在 GBK 终端上必然是乱码。所有中文输出都由 `.ps1` 负责
 
+### 报 `sh.exe :` + `NativeCommandError` / `RemoteException`？
+
+形如：
+
+```
+sh.exe :
+所在位置 ...\install-hooks.ps1:223 字符: 9
++         & $shPath $hookForSh $tmpForSh 2>&1 | Out-Null
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+```
+
+`sh.exe` 后面空空如也，指着一行看起来毫无问题的代码。这是 **Windows PowerShell
+5.1 独有的行为**，跟 sh.exe 本身没关系：
+
+脚本设了 `$ErrorActionPreference = 'Stop'`（为了让真正的错误立刻停下）。而 5.1
+在外部命令的 stderr 被**重定向**时（`2>&1` 或 `2>$null`），会把 stderr 的**每一行**
+包成 `ErrorRecord`（`NativeCommandError`）写进错误流——于是 `Stop` 让脚本当场中止。
+哪怕命令本身完全正常，哪怕那行 stderr 只是个**空行**。
+
+安装脚本自检时会故意拿一条违规信息去调钩子，钩子按设计拒绝并往 stderr 打整篇
+规范说明——正常流程，却正好踩中这个雷。`pwsh` 7 没有这个行为，所以装了 pwsh 的
+机器测不出来，只在用系统自带 5.1 时爆。
+
+现在所有外部命令都走统一的 `Invoke-Native` 包装：函数内把 `ErrorActionPreference`
+降为 `Continue`（局部赋值，不影响外层），把 stdout / stderr 一并收下再按对象类型
+分开，只根据**退出码**判断成败。如果你要改这个脚本，注意别在 `Invoke-Native`
+之外直接写 `& 外部命令 ... 2>&1`。
+
 ### Windows 需要装什么？
 
 需要 **Git for Windows**（https://git-scm.com/download/win）。它自带 MSYS2 的
